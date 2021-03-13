@@ -539,6 +539,7 @@ def server_register( sock, N, g, database ):
        and should therefore count as an unsuccessful registration that doesn't
        modify the user database.
     """
+    #TEST, READ NOTE AND MODIFY FUNCTION.
     if type(N) == int:
         N = int_to_bytes(N, 64)
     if type(g) == int:
