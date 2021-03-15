@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-
+#Daniel Heyns (30021292)
+#basic_auth.py
 ##### IMPORTS
 
 import argparse
@@ -549,9 +550,12 @@ def server_register( sock, N, g, database ):
         usernameLength = receive(sock, 1)
         username = receive(sock, bytes_to_int(usernameLength))
         username = username.decode('utf-8')
+        if username in database:
+            return None
         s = receive(sock, 16)
         v = receive(sock, 64)
         database[username] = (s, bytes_to_int(v))
+        sock.close()
         return database
     except:
         print("Unexpected error:", sys.exc_info())
@@ -741,9 +745,9 @@ if __name__ == '__main__':
         print(a)
         print('Client K_client:')
         print(K_client)
+    
     '''
 
-    
 
     # parse the command line args
     cmdline = argparse.ArgumentParser( description="Test out a secure key exchange algorithm." )
