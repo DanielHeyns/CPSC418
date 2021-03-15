@@ -150,6 +150,7 @@ def send( sock, data ):
     assert type(sock) == socket.socket
     assert type(data) == bytes
     try:
+        print(data.decode('utf-8'))
         bytesSent = sock.send(data)
     except:
         print("Exception in Socket Send") 
@@ -183,10 +184,10 @@ def receive( sock, length ):
                 return None
             data += receivedData
             if len(data) >= length:
-                print("break on length")
                 break
     except:
         print("Exception in Socket Recieve") 
+    print(data.decode('utf-8'))
     return data
 
 def safe_prime( bits=512 ):
@@ -320,9 +321,7 @@ def calc_u( A, B ):
         lengthB = int(math.ceil(lengthB/8))
         B = int_to_bytes(B,lengthB)
 
-    #CHANGED FOR TESTING FIX LATER
-    #return bytes_to_int(hash_bytes(A+B))
-    return 31
+    return bytes_to_int(hash_bytes(A+B))
     
 
 def calc_K_client( N, B, k, v, a, u, x ):
@@ -540,7 +539,6 @@ def server_register( sock, N, g, database ):
        and should therefore count as an unsuccessful registration that doesn't
        modify the user database.
     """
-    #TEST, READ NOTE AND MODIFY FUNCTION.
     if type(N) == int:
         N = int_to_bytes(N, 64)
     if type(g) == int:
@@ -586,8 +584,7 @@ def client_protocol( ip, port, N, g, username, pw, s ):
         sock = create_socket(ip, port, False)
         send(sock, b'p')
 
-        #REDUCED a FOR TESTING FIX LATER, 3 SHOUDL BE 63
-        a = int.from_bytes(os.urandom(3), byteorder="big")
+        a = int.from_bytes(os.urandom(63), byteorder="big")
 
         A = calc_A(N, g, a)
         A = int_to_bytes(A, 64)
@@ -648,8 +645,7 @@ def server_protocol( sock, N, g, database ):
        K_server are integers while username is a string. If not, return None.
     """
     try:
-        #REDUCED b FOR TESTING FIX LATER, 3 SHOUDL BE 63
-        b = int.from_bytes(os.urandom(3), byteorder="big")
+        b = int.from_bytes(os.urandom(63), byteorder="big")
 
         usernameLength = receive(sock, 1) #1
         username = receive(sock, bytes_to_int(usernameLength)) #2
@@ -697,59 +693,6 @@ def server_protocol( sock, N, g, database ):
 ##### MAIN
 
 if __name__ == '__main__':
-    '''
-    if sys.argv[1] == '1' :
-        N = 6738429807937222910210526874616251941443382359166392079528239786677121085534989603567400908198918212653384739417400283522479742444741328838214521974028099
-        g = 2
-        k = 74184672972276785240493288644147355832357041414362546492328570251674988486557
-        # N, g, k = server_prepare()
-        database = dict()
-        sock = create_socket('127.0.4.18', 3180, True)
-        while(1):
-            client, addr = sock.accept()
-            print("client connected")
-            keyletter = receive(client,1)
-            print("letter received:")
-            print(keyletter)
-            if(keyletter == b'r'):
-                database = server_register(client, N, g, database)
-                print('Server N:')
-                print(N)
-                print('Server g:')
-                print(g)
-                print('Server k:')
-                print(k)
-                print('Server db:')
-                print(database)
-            elif(keyletter == b'p'):
-                username, b, K_Server = server_protocol(client, N, g, database)
-                print('Server username:')
-                print(username)
-                print('Server b:')
-                print(b)
-                print('Server K_Server:')
-                print(K_Server)
-            else:
-                print("WRONG LETTER: ")
-                print(keyletter)
-    if sys.argv[1] == '2':
-        s = client_prepare()
-        N, g, v = client_register('127.0.4.18', 3180, 'Daniel', 'BestPasswordEver', s)
-        print('Client N:')
-        print(N)
-        print('Client g:')
-        print(g)
-        print('Client v:')
-        print(v)
-        a, K_client = client_protocol('127.0.4.18', 3180, N, g,'Daniel', 'BestPasswordEver', s)
-        print('Client a:')
-        print(a)
-        print('Client K_client:')
-        print(K_client)
-    
-    '''
-
-
     # parse the command line args
     cmdline = argparse.ArgumentParser( description="Test out a secure key exchange algorithm." )
 
