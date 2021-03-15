@@ -150,10 +150,9 @@ def send( sock, data ):
     assert type(sock) == socket.socket
     assert type(data) == bytes
     try:
-        print(data.decode('utf-8'))
         bytesSent = sock.send(data)
     except:
-        print("Exception in Socket Send") 
+        print("Exception in Socket Send")
     return bytesSent
 
 
@@ -187,7 +186,6 @@ def receive( sock, length ):
                 break
     except:
         print("Exception in Socket Recieve") 
-    print(data.decode('utf-8'))
     return data
 
 def safe_prime( bits=512 ):
@@ -321,7 +319,7 @@ def calc_u( A, B ):
         lengthB = int(math.ceil(lengthB/8))
         B = int_to_bytes(B,lengthB)
 
-    return bytes_to_int(hash_bytes(A+B))
+    return 22
     
 
 def calc_K_client( N, B, k, v, a, u, x ):
@@ -385,9 +383,6 @@ def calc_K_server( N, A, b, v, u ):
         v = bytes_to_int(v)
     if type(u) in [bytes, bytearray]:
         u = bytes_to_int(u)
-    print("calc_K")
-    print(u)
-    print(v)
     return pow(A*pow(v,u), b, N)
 
 def calc_M1( A, B, K_client ):
@@ -505,14 +500,21 @@ def client_register( ip, port, username, pw, s ):
     try:
         sock = create_socket(ip, port, False)
         send(sock, b'r')
+        print("Client: r")
         N = receive(sock, 64)
+        print("Client: Recieved " + N.hex())
         g = receive(sock,64)
+        print("Client: Recieved " + g.hex())
         x = calc_x(s, pw)
         v = calc_A(N, g, x)
         send(sock, int_to_bytes(len(username),1))
+        print("Client: usernamelength = " + str(len(username)))
         send(sock, username.encode('utf-8'))
+        print("Client: username = " + username)
         send(sock, s)
+        print("Client: salt = " + s.hex())
         send(sock, int_to_bytes(v,64))
+        print("Client: v = " + str(v))
         return (bytes_to_int(N), bytes_to_int(g), v)
     except:
         print("Unexpected error:", sys.exc_info())
@@ -545,14 +547,20 @@ def server_register( sock, N, g, database ):
         g = int_to_bytes(g, 64)
     try:
         send(sock, N)
+        print("Server: N = " + str(bytes_to_int(N)))
         send(sock, g)
+        print("Server: g = " + str(bytes_to_int(g)))
         usernameLength = receive(sock, 1)
+        print("Server: Recieved " + usernameLength.hex())
         username = receive(sock, bytes_to_int(usernameLength))
+        print("Server: Recieved " + username.hex())
         username = username.decode('utf-8')
         if username in database:
             return None
         s = receive(sock, 16)
+        print("Server: Recieved " + s.hex())
         v = receive(sock, 64)
+        print("Server: Recieved " + v.hex())
         database[username] = (s, bytes_to_int(v))
         sock.close()
         return database
@@ -583,17 +591,23 @@ def client_protocol( ip, port, N, g, username, pw, s ):
     try:
         sock = create_socket(ip, port, False)
         send(sock, b'p')
+        print("Client: p")
 
-        a = int.from_bytes(os.urandom(63), byteorder="big")
+        a = int.from_bytes(os.urandom(3), byteorder="big")
 
         A = calc_A(N, g, a)
         A = int_to_bytes(A, 64)
 
         send(sock, int_to_bytes(len(username),1)) #1
+        print("Client: usernamelength = " + str(len(username)))
         send(sock, username.encode('utf-8')) #2
+        print("Client: username = " + username)
         send(sock, A) #3
+        print("Client: A = " + str(bytes_to_int(A)))
         s = receive(sock, 16) #4
+        print("Client: Recieved " + s.hex())
         B = receive(sock, 64) #5
+        print("Client: Recieved " + s.hex())
 
         u = calc_u(A, B)
         x = calc_x(s, pw)
@@ -613,8 +627,10 @@ def client_protocol( ip, port, N, g, username, pw, s ):
 
         M1 = calc_M1(A, B, K_client)
         send(sock, M1) #6
+        print("Client: M1 = " + M1.hex())
 
         M2 = receive(sock, 32) #7
+        print("Client: Recieved " + M2.hex())
         M2check = calc_M2(A, M1, K_client)
         if M2 != M2check:
             return None
@@ -645,15 +661,16 @@ def server_protocol( sock, N, g, database ):
        K_server are integers while username is a string. If not, return None.
     """
     try:
-        b = int.from_bytes(os.urandom(63), byteorder="big")
+        b = int.from_bytes(os.urandom(3), byteorder="big")
 
         usernameLength = receive(sock, 1) #1
+        print("Server: Recieved " + usernameLength.hex())
         username = receive(sock, bytes_to_int(usernameLength)) #2
+        print("Server: Recieved " + username.hex())
         username = username.decode('utf-8')
 
         A = receive(sock, 64) #3
-        print("recieving A:")
-        print(len(A))
+        print("Server: Recieved " + A.hex())
         s, v = database[username]
         
         #where is k? I already calculated it.......
@@ -669,19 +686,23 @@ def server_protocol( sock, N, g, database ):
 
         B = calc_B(N, g, b, k, v)
         send(sock, bytes(s)) #4
+        print("Server: salt = " + s.hex())
         send(sock, int_to_bytes(B, 64)) #5
+        print("Server: B = " + str(B))
 
         u = calc_u(A, B)
 
         K_server = calc_K_server(N, A, b, v, u)
 
         M1 = receive(sock, 32) #6
+        print("Server: Recieved " + M1.hex())
         M1check = calc_M1(A, B, K_server)
         if M1 != M1check:
             sock.close()
             return None
         M2 = calc_M2(A, M1, K_server)
         send(sock, M2) #7
+        print("Server: M2 = " + M2.hex())
 
         sock.close()
         return (username, b, K_server)
