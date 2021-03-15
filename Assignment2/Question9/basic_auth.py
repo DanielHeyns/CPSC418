@@ -319,7 +319,7 @@ def calc_u( A, B ):
         lengthB = int(math.ceil(lengthB/8))
         B = int_to_bytes(B,lengthB)
 
-    return 22
+    return bytes_to_int(hash_bytes(A+B))
     
 
 def calc_K_client( N, B, k, v, a, u, x ):
@@ -593,7 +593,7 @@ def client_protocol( ip, port, N, g, username, pw, s ):
         send(sock, b'p')
         print("Client: p")
 
-        a = int.from_bytes(os.urandom(3), byteorder="big")
+        a = int.from_bytes(os.urandom(63), byteorder="big")
 
         A = calc_A(N, g, a)
         A = int_to_bytes(A, 64)
@@ -661,7 +661,7 @@ def server_protocol( sock, N, g, database ):
        K_server are integers while username is a string. If not, return None.
     """
     try:
-        b = int.from_bytes(os.urandom(3), byteorder="big")
+        b = int.from_bytes(os.urandom(63), byteorder="big")
 
         usernameLength = receive(sock, 1) #1
         print("Server: Recieved " + usernameLength.hex())
