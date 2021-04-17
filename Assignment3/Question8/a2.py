@@ -215,9 +215,9 @@ def safe_prime( bits=512 ):
     =======
     An interger matching the spec.
     """
-
+    print("safe_prime bits:", bits)
     assert bits > 5                                   # this algorithm likely breaks for small numbers of bits
-
+    
     # do a linear search
     maximum = 1 << (bits-1)
     q       = randbits(bits-1) | (1 << (bits-2))      # guarantee the high bit is set

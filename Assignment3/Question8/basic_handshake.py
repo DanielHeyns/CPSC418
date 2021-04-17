@@ -19,7 +19,12 @@ from typing import Mapping, Optional, Union
 
 # Bad news: anything imported for those functions won't be included here, so you'll
 #  still need to do the usual imports. Insert them here.
-
+from secrets import randbelow
+from cryptography.hazmat.primitives import padding
+import os
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import hashes, hmac
+from math import ceil
 
 ##### METHODS
 
@@ -42,6 +47,61 @@ def varprint( data, label, source="Client" ):
         print( f"{source}: {middle}{data}" )
 
 
+def gcd_alg(x, y):
+  
+    #this is just the euclidean algorithm.
+    while(y):
+       x, y = y, x % y
+    return x
+
+
+def extended_gcd(a,b):
+    #using bezout
+    arr_multiples = []
+    #initial multiple generation
+    while b > 1:
+        arr_multiples.append(a//b)
+        btemp = a%b
+        a = b
+        b = btemp
+    
+    #bezout tableau
+    a_curr = 0
+    a_prev = 1
+    b_curr = 1
+    b_prev = 0
+    for i in arr_multiples:
+        b_currtemp = b_curr
+        b_curr = i * b_curr + b_prev
+        b_prev = b_currtemp
+
+        a_currtemp = a_curr
+        a_curr = i * a_curr + a_prev
+        a_prev = a_currtemp
+    a = pow(-1,(len(arr_multiples)-1)) * a_curr
+    b = pow(-1,(len(arr_multiples))) * b_curr
+    return a,b
+
+def pad_message_128(message:bytes):
+    assert type(message) == bytes 
+
+    padder = padding.PKCS7(128).padder()
+    padded_data = padder.update(message)
+    padded_data += padder.finalize()
+    return padded_data
+
+def unpad_message_128(message:bytes):
+    assert type(message) == bytes 
+
+    unpadder = padding.PKCS7(128).unpadder()
+    unpadded_data = unpadder.update(message)
+    unpadded_data += unpadder.finalize()
+    return unpadded_data
+
+def byte_length_of_int(number):
+    length = number.bit_length()
+    length = int(ceil(length/8))
+    return length
 ##### CLASSES
 
 class DH_params:
@@ -171,6 +231,10 @@ class RSA_key:
 
         assert type(bits) == int
         assert (bits & 0x1) == 0        # must be even
+        p = safe_prime(bits//2)
+        q = safe_prime(bits//2)
+        return (p,q)
+
 
 # delete this comment and insert your code here
 
@@ -198,8 +262,15 @@ class RSA_key:
 
         assert type(p) == int
         assert type(q) == int
-
-# delete this comment and insert your code here
+        n = p*q
+        phi_n = (p-1)*(q-1)
+        e = randbelow(phi_n)
+        while gcd_alg(e,phi_n) != 1:
+            e = randbelow(phi_n)
+        d,f = extended_gcd(e, phi_n)
+        if(d<0): d += phi_n
+        return (e,d)
+        
 
     def sign( self, message: Union[int,bytes] ) -> Union[int,None]:
         """Sign a message via this RSA key, if possible.
@@ -220,8 +291,13 @@ class RSA_key:
         """
 
         assert type(message) in [int, bytes]
-
-# delete this comment and insert your code here
+        if(type(message) == bytes):
+            message = bytes_to_int(message)
+        #encrypt with private key to sign
+        if self.d:
+            return pow(message,self.d, self.N)
+        else:
+            return None
 
     def encrypt( self, message: Union[int,bytes] ) -> int:
         """Encrypt a message via this RSA key.
@@ -241,8 +317,13 @@ class RSA_key:
         """
 
         assert type(message) in [int, bytes]
+        if(type(message) == bytes):
+            message = bytes_to_int(message)
 
-# delete this comment and insert your code here
+        #encrypt with public key to encrypt
+        return pow(message,self.e, self.N)
+
+
 
     def decrypt( self, cypher: Union[int,bytes] ) -> Union[int,None]:
         """Decrypt a message via this RSA key.
@@ -262,8 +343,14 @@ class RSA_key:
         """
 
         assert type(cypher) in [int, bytes]
+        if(type(cypher) == bytes):
+            cypher = bytes_to_int(cypher)
+        #decrypt with private key to decrypt
+        if self.d:
+            return pow(cypher,self.d, self.N)
+        else:
+            return None
 
-# delete this comment and insert your code here
 
 def pad_encrypt_then_HMAC( plaintext:bytes, key_cypher:bytes, key_HMAC:bytes ) -> bytes:
     """Encrypt a plaintext with AES-256. Note the order of operations!
@@ -283,8 +370,19 @@ def pad_encrypt_then_HMAC( plaintext:bytes, key_cypher:bytes, key_HMAC:bytes ) -
     assert type(key_cypher) is bytes
     assert len(key_cypher) == 32
     assert type(key_HMAC) is bytes
+    #pad message to 128, generate random IV 16 bytes, encrypt with AES-256 in CBC mode, IV
+    padded_plaintext = pad_message_128(plaintext)
+    iv = os.urandom(16)
+    cipher = Cipher(algorithms.AES(key_cypher), modes.CBC(iv))
+    encryptor = cipher.encryptor()
+    ct = encryptor.update(padded_plaintext) + encryptor.finalize()
+    h = hmac.HMAC(key_HMAC, hashes.SHA3_256())
+    h.update(iv + ct)
+    hmac_hash = h.finalize()
+    return iv + ct + hmac_hash
 
-# delete this comment and insert your code here
+
+
 
 def decrypt_and_verify( cyphertext: bytes, key_cypher: bytes, key_HMAC:bytes ) -> \
         Optional[bytes]:
@@ -309,7 +407,24 @@ def decrypt_and_verify( cyphertext: bytes, key_cypher: bytes, key_HMAC:bytes ) -
     assert len(key_cypher) == 32
     assert type(key_HMAC) is bytes
 
-# delete this comment and insert your code here
+    iv = cyphertext[:16]
+    ct = cyphertext[16:-32]
+    hmac_val = cyphertext[-32:]
+    h = hmac.HMAC(key_HMAC, hashes.SHA3_256())
+    h.update(iv + ct)
+    hmac_check_hash = h.finalize()
+    if hmac_check_hash != hmac_val:
+        return None
+    cipher = Cipher(algorithms.AES(key_cypher), modes.CBC(iv))
+    decryptor = cipher.decryptor()
+    try:
+        decrypted_message = decryptor.update(ct) + decryptor.finalize()
+        print("decrypted message length:", len(decrypted_message))
+        decrypted_message = unpad_message_128(decrypted_message)
+    except:
+        print("Cypher failed to decrypt in decrypt_and_verify")
+        return None
+    return decrypted_message
 
 def ttp_prepare( bits: int=1024 ) -> RSA_key:
     """Calculate a full RSA keypair for the TTP.
@@ -322,8 +437,7 @@ def ttp_prepare( bits: int=1024 ) -> RSA_key:
     =======
     An RSA_key object.
     """
-
-# delete this comment and insert your code here
+    return RSA_key(bits = bits)
 
 def ttp_sign( sock: socket.socket, ttp_key: RSA_key, \
         database: Mapping[str,RSA_key]  ) -> Optional[Mapping[str,RSA_key]]:
@@ -351,7 +465,64 @@ def ttp_sign( sock: socket.socket, ttp_key: RSA_key, \
     assert type(sock) is socket.socket
     assert type(database) == dict
 
-# delete this comment and insert your code here
+    length_name = receive(sock, 1)
+    if len(length_name) != 1:
+        return close_sock( sock )
+    length_name = bytes_to_int(length_name)
+    varprint( length_name, 'length_name', "TTP" )
+
+    name = receive(sock, length_name)
+    if len(name) != length_name:
+        return close_sock( sock )
+    varprint( name.decode("utf-8"), 'name', "name" )
+
+    serv_N = receive(sock, 128)
+    if len(serv_N) !=128:
+        return close_sock( sock )
+
+    serv_e = receive(sock, 128)
+    if len(serv_e) != 128:
+        return close_sock( sock )
+
+    serv_key = (bytes_to_int(serv_N),bytes_to_int(serv_e))
+    varprint( serv_key, 'serv_key', "TTP" )
+
+    db_index = name.decode("utf-8")
+    if db_index in database:
+        db_serv_key = database[db_index]
+        if db_serv_key.N != serv_key[0] or db_serv_key.e != serv_key[1]:
+            print("Server name exists with different information. Quitting...")
+            return  close_sock( sock )
+
+    digest = hashes.Hash(hashes.SHA3_512())
+    digest.update(name + serv_N + serv_e)
+    t = digest.finalize()
+
+    digest = hashes.Hash(hashes.SHA3_512())
+    digest.update(t)
+    t_prime = digest.finalize()
+
+    S = bytes_to_int(t+t_prime) - ttp_key.N
+
+    ttp_sig = ttp_key.sign(S)
+
+    N_bytes = int_to_bytes(ttp_key.N, byte_length_of_int(ttp_key.N))
+    count = send(sock, N_bytes)
+    if count != len(N_bytes):
+        return close_sock( sock )
+
+    ttp_sig_bytes = int_to_bytes(ttp_sig, byte_length_of_int(ttp_sig))
+    count = send( sock, ttp_sig_bytes)
+    if count != len(ttp_sig_bytes):
+        return close_sock( sock )
+
+    if db_index not in database:
+        database[db_index] = RSA_key(pubkey=serv_key)
+
+    close_sock( sock )
+    return database
+
+
 
 def ttp_sendkey( sock: socket.socket, ttp_key: RSA_key ) -> bool:
     """Communicate the TTP's public key. Do not send the private key!
@@ -367,8 +538,14 @@ def ttp_sendkey( sock: socket.socket, ttp_key: RSA_key ) -> bool:
     =======
     True, if the data was sent successfully. False, otherwise.
     """
-
-# delete this comment and insert your code here
+    pub_key_bytes = int_to_bytes(ttp_key.N, byte_length_of_int(ttp_key.N))
+    pub_key_bytes += int_to_bytes(ttp_key.e, byte_length_of_int(ttp_key.e))
+    count = send( sock, pub_key_bytes)
+    if count != len(pub_key_bytes):
+        close_sock( sock )
+        return False
+    close_sock( sock )
+    return True
 
 def sign_request( IP: str, port: int, server_name: str, server_key: RSA_key ) -> \
         Optional[tuple[int,int]]:
@@ -388,7 +565,44 @@ def sign_request( IP: str, port: int, server_name: str, server_key: RSA_key ) ->
        TTP could not be contacted, or any other error occurred, return None.
     """
 
-# delete this comment and insert your code here
+    sock = create_socket(IP,port)
+
+    count = send( sock, b's')
+    if count != 1:
+        return close_sock( sock )
+
+    server_name_length = len(server_name.encode())
+    server_name_length_bytes = int_to_bytes(server_name_length, 1)
+
+    count = send( sock, server_name_length_bytes)
+    if count != 1:
+        return close_sock( sock )
+
+    count = send( sock, server_name.encode())
+    if count != server_name_length:
+        return close_sock( sock )
+
+    N_bytes = int_to_bytes(server_key.N, 128)
+    count = send( sock, N_bytes)
+    if count != 128:
+        return close_sock( sock )
+
+    e_bytes = int_to_bytes(server_key.e, 128)
+    count = send( sock, e_bytes)
+    if count != 128:
+        return close_sock( sock )
+
+    ttp_N = receive(sock, 128)
+    if len(ttp_N) !=128:
+        return close_sock( sock )
+
+    ttp_sig = receive(sock, 128)
+    if len(ttp_sig) !=128:
+        return close_sock( sock )
+
+    close_sock( sock )
+    return (bytes_to_int(ttp_N), bytes_to_int(ttp_sig))
+    
 
 def key_request( IP: str, port: int ) -> Optional[RSA_key]:
     """Request the TTP's public key.
@@ -403,8 +617,20 @@ def key_request( IP: str, port: int ) -> Optional[RSA_key]:
     On success, return an RSA_key object. If there was a communications error,
       return None.
     """
+    sock = create_socket(IP,port)
+    count = send( sock, b'k')
+    if count != 1:
+        return close_sock( sock )
+    ttp_N = receive(sock, 128)
+    if len(ttp_N) !=128:
+        return close_sock( sock )
+    ttp_d = receive(sock, 128)
+    if len(ttp_d) !=128:
+        return close_sock( sock )
 
-# delete this comment and insert your code here
+    close_sock( sock )
+    return RSA_key(pubkey = (ttp_N, ttp_d))
+
 
 def server_prepare( safe_bits: int=512, RSA_bits: int=1024 ) -> tuple[DH_params, RSA_key]:
     """Precalculate key values that the server needs. This includes all the
@@ -481,7 +707,11 @@ def client_protocol( ip: str, port: int, dh: DH_params, ttp_key: RSA_key, \
 
 if __name__ == '__main__':
 
+    # bytes1 = b'qaqaqaqaqaqaqaqahbhbhbhbhbhbhbhb'
+    # print(bytes1[:16])
+    # print(bytes1[16:32])
     # parse the command line args
+    
     cmdline = argparse.ArgumentParser( description="Test out a secure handshake algorithm by transferring a file." )
 
     methods = cmdline.add_argument_group( 'ACTIONS', "The four actions this program can do." )
