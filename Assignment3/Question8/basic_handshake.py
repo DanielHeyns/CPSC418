@@ -102,6 +102,22 @@ def byte_length_of_int(number):
     length = number.bit_length()
     length = int(ceil(length/8))
     return length
+
+def hash_bytes( input ):
+   """Hash the given input using SHA-2 224.
+
+   PARAMETERS
+   ==========
+   input: A bytes object containing the value to be hashed.
+
+   RETURNS
+   =======
+   A bytes object containing the hash value.
+   """
+   myhash = hashes.Hash(hashes.SHA3_256())
+   myhash.update(input)
+   hashed_output = myhash.finalize()
+   return hashed_output
 ##### CLASSES
 
 class DH_params:
@@ -419,7 +435,6 @@ def decrypt_and_verify( cyphertext: bytes, key_cypher: bytes, key_HMAC:bytes ) -
     decryptor = cipher.decryptor()
     try:
         decrypted_message = decryptor.update(ct) + decryptor.finalize()
-        print("decrypted message length:", len(decrypted_message))
         decrypted_message = unpad_message_128(decrypted_message)
     except:
         print("Cypher failed to decrypt in decrypt_and_verify")
@@ -566,6 +581,8 @@ def sign_request( IP: str, port: int, server_name: str, server_key: RSA_key ) ->
     """
 
     sock = create_socket(IP,port)
+    if sock is None:
+        return None
 
     count = send( sock, b's')
     if count != 1:
@@ -618,6 +635,8 @@ def key_request( IP: str, port: int ) -> Optional[RSA_key]:
       return None.
     """
     sock = create_socket(IP,port)
+    if sock is None:
+        return None
     count = send( sock, b'k')
     if count != 1:
         return close_sock( sock )
@@ -629,7 +648,7 @@ def key_request( IP: str, port: int ) -> Optional[RSA_key]:
         return close_sock( sock )
 
     close_sock( sock )
-    return RSA_key(pubkey = (ttp_N, ttp_d))
+    return RSA_key(pubkey = (bytes_to_int(ttp_N), bytes_to_int(ttp_d)))
 
 
 def server_prepare( safe_bits: int=512, RSA_bits: int=1024 ) -> tuple[DH_params, RSA_key]:
@@ -645,8 +664,10 @@ def server_prepare( safe_bits: int=512, RSA_bits: int=1024 ) -> tuple[DH_params,
     =======
     A tuple of the form (DH_params, RSA_key).
     """
+    dh_object = DH_params(bits = safe_bits)
+    rsa_object = RSA_key(bits=RSA_bits)
+    return (dh_object,rsa_object)
 
-# delete this comment and insert your code here
 
 def server_protocol( sock: socket.socket, dh: DH_params, server_key: RSA_key, \
         server_name: str, ttp_sig: int, database: Mapping[str,tuple[bytes,int]] ) -> \
@@ -673,8 +694,99 @@ def server_protocol( sock: socket.socket, dh: DH_params, server_key: RSA_key, \
        object; and the plaintext version of the file, as a bytes object.
        If the protocol failed, return None.
     """
+    encoded_username_length = receive(sock, 1)
+    if len(encoded_username_length) !=1:
+        return close_sock(sock)
 
-# delete this comment and insert your code here
+    username_length = bytes_to_int(encoded_username_length)
+
+    encoded_username = receive(sock, username_length)
+    if len(encoded_username) !=username_length:
+        return close_sock(sock) 
+    
+    username = encoded_username.decode()
+
+    encoded_server_name = server_name.encode()
+    encoded_server_name_length = len(encoded_server_name)
+
+    count = send( sock, int_to_bytes(encoded_server_name_length,1))
+    if count != 1:
+        return close_sock( sock )
+    
+    data = encoded_server_name + int_to_bytes(server_key.N, 128) + int_to_bytes(server_key.e, 128) \
+        + int_to_bytes(ttp_sig, 128)
+    count = send( sock, data)
+    if count != (384 + encoded_server_name_length):
+        return close_sock( sock )
+
+    #copied from Assignment 2 Below
+    b = int.from_bytes(os.urandom(63), byteorder="big")
+
+    enc_A_bytes = receive(sock, 128) #3
+    print("Server: Recieved " + enc_A_bytes.hex())
+    enc_A = bytes_to_int(enc_A_bytes)
+    A = server_key.decrypt(enc_A)
+    if A%dh.N == 0:
+        return close_sock(sock)
+    if username in database:
+        s, v = database[username]
+    else:
+        return close_sock(sock)
+    
+    #where is k? I already calculated it.......
+    byteN = dh.N
+    byteG = dh.g
+    if type(byteN) == int:
+        byteN = int_to_bytes(byteN,64)
+    if type(byteG) == int:
+        byteG = int_to_bytes(byteG,64)
+    byteK = hash_bytes(byteN + byteG)
+    k = int.from_bytes(byteK, "big")
+
+
+    B = calc_B(dh.N, dh.g, b, k, v)
+    send(sock, bytes(s)) #4
+    print("Server: salt = " + s.hex())
+    send(sock, int_to_bytes(B, 64)) #5
+    print("Server: B = " + str(B))
+
+    u = calc_u(A, B)
+
+    K_server = calc_K_server(dh.N, A, b, v, u)
+
+    M1 = receive(sock, 32) #6
+    print("Server: Recieved " + M1.hex())
+    M1check = calc_M1(A, B, K_server)
+    if M1 != M1check:
+        return close_sock(sock) 
+    M2 = calc_M2(A, M1, K_server)
+    send(sock, M2) #7
+    print("Server: M2 = " + M2.hex())
+
+    encrypted_file_bytes_length_bytes = receive(sock, 4)
+    if len(encrypted_file_bytes_length_bytes) !=4:
+        return close_sock(sock) 
+    encrypted_file_bytes_length = bytes_to_int(encrypted_file_bytes_length_bytes)
+
+
+    encrypted_file_bytes = receive(sock, encrypted_file_bytes_length)
+    if len(encrypted_file_bytes) !=encrypted_file_bytes_length:
+        return close_sock(sock) 
+    
+    K_server_bytes = int_to_bytes(K_server, 64)
+    AES_key = K_server_bytes[:32]
+    HMAC_key = K_server_bytes[32:]
+
+    decrypted_file = decrypt_and_verify(encrypted_file_bytes,AES_key,HMAC_key)
+    if decrypted_file == None:
+        return close_sock(sock)
+
+    close_sock(sock)
+    return (username, b, decrypted_file, AES_key, HMAC_key)
+    
+
+
+
 
 def client_protocol( ip: str, port: int, dh: DH_params, ttp_key: RSA_key, \
         username: str, pw: str, s: bytes, file_bytes: bytes ) -> \
@@ -699,9 +811,124 @@ def client_protocol( ip: str, port: int, dh: DH_params, ttp_key: RSA_key, \
     If successful, return a tuple of the form (a, K_client), where both a and
        K_client are integers. If not, return None.
     """
+    sock = create_socket(ip,port)
+    if sock is None:
+        return None
 
-# delete this comment and insert your code here
+    count = send( sock, b'p')
+    if count != 1:
+        return close_sock( sock )
 
+    encoded_username = username.encode()
+    encoded_username_length = len(encoded_username)
+
+    count = send( sock, int_to_bytes(encoded_username_length,1))
+    if count != 1:
+        return close_sock( sock )
+
+    count = send(sock, encoded_username)
+    if count != encoded_username_length:
+        return close_sock( sock )
+
+    encoded_server_name_length_bytes = receive(sock, 1)
+    if len(encoded_server_name_length_bytes) !=1:
+        return close_sock(sock) 
+    encoded_server_name_length = bytes_to_int(encoded_server_name_length_bytes)
+
+    server_cert = receive(sock, (encoded_server_name_length + 384))
+    if len(server_cert) !=(encoded_server_name_length + 384):
+        return close_sock(sock)
+
+    ttp_sig_rec = server_cert[-128:]
+    server_cert = server_cert[:-128]
+
+    server_name_bytes = server_cert[:-256]
+    server_N_bytes = server_cert[-256:-128]
+    server_e_bytes = server_cert[-128:]
+
+    server_N = bytes_to_int(server_N_bytes)
+    server_e = bytes_to_int(server_e_bytes)
+    server_name = server_name_bytes.decode()
+    server_key = RSA_key(pubkey=(server_N,server_e))
+
+
+    digest = hashes.Hash(hashes.SHA3_512())
+    digest.update(server_cert)
+    t = digest.finalize()
+
+    digest = hashes.Hash(hashes.SHA3_512())
+    digest.update(t)
+    t_prime = digest.finalize()
+
+    S = bytes_to_int(t+t_prime) - ttp_key.N
+
+    ttp_sig = ttp_key.sign(S)
+
+    if ttp_sig_rec != ttp_sig:
+        return close_sock(sock)
+    
+
+    #COPIED FROM A2 BELOW
+    a = int.from_bytes(os.urandom(63), byteorder="big")
+
+    A = calc_A(dh.N, dh.g, a)
+    #A = int_to_bytes(A, 64)
+    enc_A = server_key.encrypt(A)
+    enc_A_bytes = int_to_bytes(A, 128)
+
+    send(sock, enc_A_bytes) #3
+    print("Client: A = " + str(bytes_to_int(A)))
+    s = receive(sock, 16) #4
+    print("Client: Recieved " + s.hex())
+    B = receive(sock, 64) #5
+    print("Client: Recieved " + s.hex())
+
+    u = calc_u(A, B)
+    x = calc_x(s, pw)
+    v = calc_A(dh.N, dh.g, x)
+
+    #where is k? I already calculated it.......
+    byteN = dh.N
+    byteG = dh.g
+    if type(byteN) == int:
+        byteN = int_to_bytes(byteN,64)
+    if type(byteG) == int:
+        byteG = int_to_bytes(byteG,64)
+    byteK = hash_bytes(byteN + byteG)
+    k = int.from_bytes(byteK, "big")
+
+    K_client = calc_K_client(N, B, k, v, a, u, x)
+
+    M1 = calc_M1(A, B, K_client)
+    send(sock, M1) #6
+    print("Client: M1 = " + M1.hex())
+
+    M2 = receive(sock, 32) #7
+    print("Client: Recieved " + M2.hex())
+    M2check = calc_M2(A, M1, K_client)
+    if M2 != M2check:
+        return close_sock(sock)
+
+    K_client_bytes = int_to_bytes(K_client, 64)
+    AES_key = K_client_bytes[:32]
+    HMAC_key = K_client_bytes[32:]
+    encrypted_file_bytes = pad_encrypt_then_HMAC(file_bytes,AES_key,HMAC_key) #this might now work, might need to break up file and only pad final block
+
+    encrypted_file_bytes_length = len(encrypted_file_bytes)
+    encrypted_file_bytes_length_bytes = int_to_bytes(encrypted_file_bytes_length,4)
+
+    count = send( sock, encrypted_file_bytes_length_bytes)
+    if count != 4:
+        return close_sock( sock )
+
+
+    count = send( sock, encrypted_file_bytes)
+    if count != encrypted_file_bytes_length:
+        return close_sock( sock )
+
+    close_sock(sock)
+    return (a, K_client)
+    
 
 ##### MAIN
 
